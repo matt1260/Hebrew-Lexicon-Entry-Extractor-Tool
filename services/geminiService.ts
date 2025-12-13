@@ -1,7 +1,23 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { LexiconEntry } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Resolve API key from environment.
+// - For Vite frontend builds, set `VITE_GEMINI_API_KEY` in a .env file.
+// - For Node/server environments, set `GEMINI_API_KEY` or `API_KEY`.
+const API_KEY = (
+  typeof window !== "undefined"
+    ? (import.meta as any).env?.VITE_GEMINI_API_KEY
+    : process.env.GEMINI_API_KEY
+) || process.env.API_KEY;
+
+if (!API_KEY) {
+  // Fail fast with a clear message. This will show in console during development.
+  console.error(
+    "Gemini API key not found. Set VITE_GEMINI_API_KEY (Vite) or GEMINI_API_KEY/API_KEY (Node)."
+  );
+}
+
+const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 // We use the pro model for better OCR capabilities on dense, historical text
 const MODEL_NAME = 'gemini-3-pro-preview';

@@ -35,7 +35,7 @@ export const extractEntriesFromImage = async (file: File): Promise<LexiconEntry[
     const imagePart = await fileToGenerativePart(file);
 
     const prompt = `
-      Analyze this page from Gesenius' Hebrew-Chaldee Lexicon. 
+      Analyze this page from a Hebrew-Chaldee Lexicon. 
       Extract all Hebrew word entries found on this page into a structured JSON format.
       
       For each entry, capture:

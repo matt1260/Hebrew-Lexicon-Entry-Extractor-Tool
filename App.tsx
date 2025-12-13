@@ -13,6 +13,7 @@ const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
   const [isDbReady, setIsDbReady] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   // Initialize DB on mount
   useEffect(() => {
@@ -20,9 +21,11 @@ const App: React.FC = () => {
       try {
         await dbService.init();
         setIsDbReady(true);
+        // Load initial data
         refreshEntries(null);
-      } catch (e) {
+      } catch (e: any) {
         console.error("Failed to initialize database", e);
+        setDbError(e.message || "Failed to load database. Please refresh the page.");
       }
     };
     initDb();
@@ -96,8 +99,8 @@ const App: React.FC = () => {
           } : p
         ));
 
-        // Refresh the view if we are looking at 'All' or if the new entries match current filter
-        // Simplifying: just refresh current view
+        // Refresh the view if the new entries are relevant to current filter
+        // Simplifying to just refresh view
         refreshEntries(selectedLetter);
 
       } catch (error) {
@@ -133,6 +136,20 @@ const App: React.FC = () => {
     
     setIsProcessing(false);
   }, [selectedLetter, refreshEntries]);
+
+  if (dbError) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50 text-red-600 p-4">
+        <div className="text-center max-w-md">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 mx-auto mb-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+          <h2 className="text-xl font-bold mb-2">Error Loading Database</h2>
+          <p>{dbError}</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isDbReady) {
     return (

@@ -1,16 +1,59 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import FileUploader from './components/FileUploader';
 import ResultsDisplay from './components/ResultsDisplay';
 import ProcessingQueue from './components/ProcessingQueue';
+import AlphabetFilter from './components/AlphabetFilter';
 import { ProcessedPage, LexiconEntry } from './types';
 import { extractEntriesFromImage } from './services/geminiService';
+import { dbService } from './services/db';
 
 const App: React.FC = () => {
   const [pages, setPages] = useState<ProcessedPage[]>([]);
+  const [dbEntries, setDbEntries] = useState<LexiconEntry[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
+  const [isDbReady, setIsDbReady] = useState(false);
+
+  // Initialize DB on mount
+  useEffect(() => {
+    const initDb = async () => {
+      try {
+        await dbService.init();
+        setIsDbReady(true);
+        refreshEntries(null);
+      } catch (e) {
+        console.error("Failed to initialize database", e);
+      }
+    };
+    initDb();
+  }, []);
+
+  const refreshEntries = useCallback((letter: string | null) => {
+    if (letter) {
+      setDbEntries(dbService.getEntriesByLetter(letter));
+    } else {
+      setDbEntries(dbService.getAllEntries());
+    }
+  }, []);
+
+  // Update entries when letter filter changes
+  useEffect(() => {
+    if (isDbReady) {
+      refreshEntries(selectedLetter);
+    }
+  }, [selectedLetter, isDbReady, refreshEntries]);
+
+  const handleDeleteEntries = useCallback((idsToDelete: string[]) => {
+    dbService.deleteEntries(idsToDelete);
+    refreshEntries(selectedLetter);
+  }, [selectedLetter, refreshEntries]);
+
+  const handleLetterSelect = (letter: string | null) => {
+    setSelectedLetter(letter);
+  };
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
-    // Create initial page objects
+    // Create initial page objects for status tracking
     const newPages: ProcessedPage[] = files.map(file => ({
       id: Math.random().toString(36).substring(7),
       fileName: file.name,
@@ -22,14 +65,11 @@ const App: React.FC = () => {
     setPages(prev => [...prev, ...newPages]);
     setIsProcessing(true);
 
-    // Process sequentially to not hit rate limits easily and for better UX control
-    // In a production app with a backend queue, this could be parallelized more aggressively.
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const pageId = newPages[i].id;
       const pageUrl = newPages[i].imageUrl;
 
-      // Update status to processing
       setPages(prev => prev.map(p => 
         p.id === pageId ? { ...p, status: 'processing' } : p
       ));
@@ -43,7 +83,11 @@ const App: React.FC = () => {
           sourcePage: file.name,
           sourceUrl: pageUrl
         }));
+
+        // Insert into Database
+        dbService.addEntries(enrichedEntries);
         
+        // Update local status
         setPages(prev => prev.map(p => 
           p.id === pageId ? { 
             ...p, 
@@ -51,6 +95,11 @@ const App: React.FC = () => {
             entries: enrichedEntries 
           } : p
         ));
+
+        // Refresh the view if we are looking at 'All' or if the new entries match current filter
+        // Simplifying: just refresh current view
+        refreshEntries(selectedLetter);
+
       } catch (error) {
         console.error(`Error processing ${file.name}:`, error);
         
@@ -58,7 +107,6 @@ const App: React.FC = () => {
         const isQuotaError = errorMessage.toLowerCase().includes('quota') || errorMessage.includes('429');
         
         setPages(prev => {
-          // Update the current page to error
           let updatedPages = prev.map((p): ProcessedPage => 
             p.id === pageId ? { 
               ...p, 
@@ -67,7 +115,6 @@ const App: React.FC = () => {
             } : p
           );
 
-          // If we hit a quota limit, cancel all pending pages to prevent further failures
           if (isQuotaError) {
              updatedPages = updatedPages.map((p): ProcessedPage => 
                p.status === 'pending' ? {
@@ -77,24 +124,31 @@ const App: React.FC = () => {
                } : p
              );
           }
-          
           return updatedPages;
         });
 
-        if (isQuotaError) {
-          // Stop processing the queue
-          break;
-        }
+        if (isQuotaError) break;
       }
     }
     
     setIsProcessing(false);
-  }, []);
+  }, [selectedLetter, refreshEntries]);
+
+  if (!isDbReady) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-500">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p>Initializing Database...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 py-4 px-6 flex items-center justify-between flex-shrink-0">
+      <header className="bg-white border-b border-slate-200 py-4 px-6 flex items-center justify-between flex-shrink-0 z-20 relative">
         <div className="flex items-center gap-3">
           <div className="bg-indigo-600 text-white p-2 rounded-lg">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
@@ -103,18 +157,15 @@ const App: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-900 leading-tight">Hebrew Lexicon Scanner</h1>
-            <p className="text-xs text-slate-500">Powered by Gemini 3.0 Pro</p>
+            <p className="text-xs text-slate-500">SQLite Database Active</p>
           </div>
-        </div>
-        <div className="text-sm text-slate-500">
-           {pages.reduce((acc, p) => acc + p.entries.length, 0)} words extracted
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden p-6 gap-6 flex">
+      <main className="flex-1 overflow-hidden flex">
         {/* Left Sidebar: Upload & Status */}
-        <div className="w-80 flex flex-col gap-6 flex-shrink-0">
+        <div className="w-80 flex flex-col gap-6 flex-shrink-0 p-6 border-r border-slate-200 bg-slate-50 z-10">
           <FileUploader 
             onFilesSelected={handleFilesSelected} 
             isProcessing={isProcessing} 
@@ -122,9 +173,20 @@ const App: React.FC = () => {
           <ProcessingQueue pages={pages} />
         </div>
 
-        {/* Right Content: Results Table */}
-        <div className="flex-1 min-w-0">
-          <ResultsDisplay processedPages={pages} />
+        {/* Right Content: Alphabet & Results */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <AlphabetFilter 
+            selectedLetter={selectedLetter} 
+            onLetterSelect={handleLetterSelect} 
+          />
+          
+          <div className="flex-1 overflow-hidden">
+            <ResultsDisplay 
+              entries={dbEntries} 
+              onDeleteEntries={handleDeleteEntries}
+              filterTitle={selectedLetter ? `Entries starting with ${selectedLetter}` : 'All Entries'}
+            />
+          </div>
         </div>
       </main>
     </div>

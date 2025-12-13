@@ -40,10 +40,11 @@ export const extractEntriesFromImage = async (file: File): Promise<LexiconEntry[
       
       For each entry, capture:
       1. The main Hebrew word (lemma) including vowel points if visible.
-      2. The transliteration (if you can infer it or it is present).
-      3. The part of speech (e.g., n.m., v., adj.).
-      4. The English definition (summarized if very long).
-      5. The root word if explicitly mentioned.
+      2. The consonantal Hebrew word (the word stripped of all vowel points/niqqud).
+      3. The transliteration (if you can infer it or it is present).
+      4. The part of speech (e.g., n.m., v., adj.).
+      5. The English definition (summarized if very long).
+      6. The root word if explicitly mentioned.
       
       The image contains dense text in columns. Read carefully column by column.
       Ignore page headers, footers, or marginalia that are not dictionary entries.
@@ -65,13 +66,14 @@ export const extractEntriesFromImage = async (file: File): Promise<LexiconEntry[
           items: {
             type: Type.OBJECT,
             properties: {
-              hebrewWord: { type: Type.STRING, description: "The Hebrew word entry" },
+              hebrewWord: { type: Type.STRING, description: "The Hebrew word entry with niqqud" },
+              hebrewConsonantal: { type: Type.STRING, description: "The Hebrew word entry without niqqud (consonantal)" },
               transliteration: { type: Type.STRING, description: "English transliteration of the word" },
               partOfSpeech: { type: Type.STRING, description: "Grammatical part of speech" },
               definition: { type: Type.STRING, description: "English definition of the word" },
               root: { type: Type.STRING, description: "Root word if available" }
             },
-            required: ["hebrewWord", "definition"]
+            required: ["hebrewWord", "hebrewConsonantal", "definition"]
           }
         }
       }
@@ -87,7 +89,15 @@ export const extractEntriesFromImage = async (file: File): Promise<LexiconEntry[
       throw new Error("No data returned from Gemini. The model might have failed to generate text.");
     }
 
-    const data = JSON.parse(response.text) as LexiconEntry[];
+    const rawData = JSON.parse(response.text);
+    
+    // Add unique IDs to each entry
+    const data: LexiconEntry[] = Array.isArray(rawData) ? rawData.map((item: any) => ({
+      ...item,
+      // Use crypto.randomUUID if available, otherwise fallback to simple random string
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36)
+    })) : [];
+
     return data;
 
   } catch (error: any) {

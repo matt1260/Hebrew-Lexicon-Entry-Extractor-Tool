@@ -1,5 +1,7 @@
 export interface LexiconEntry {
+  id: string;
   hebrewWord: string;
+  hebrewConsonantal?: string;
   transliteration?: string;
   partOfSpeech: string;
   definition: string;

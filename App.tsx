@@ -1237,31 +1237,9 @@ const App: React.FC = () => {
   }, [refreshEntries]);
 
   const handleCreateNewDatabaseNow = useCallback(async () => {
-    // Only allow creating a new DB if none exists, otherwise confirm overwrite
-    if (dbService.hasDatabase()) {
-      if (!window.confirm('A database already exists. Creating a new DB now will replace the current working DB. Continue?')) {
-        return;
-      }
-    }
-    setIsResettingDb(true);
-    setDbError(null);
-    try {
-      await dbService.resetDatabase();
-      await dbService.init();
-      setDbLoadSource(dbService.getLoadSource());
-      setHasDatabase(dbService.hasDatabase());
-      setInitialSetupRequired(false);
-      refreshEntries(null);
-      setSweepInvalidCount(dbService.getPagesWithInvalid().length);
-      setInvalidPages(dbService.getPagesWithInvalid());
-      alert('A fresh database has been created and is ready.');
-    } catch (error: any) {
-      console.error('Failed to create new database', error);
-      setDbError(error?.message || 'Failed to create new database.');
-    } finally {
-      setIsResettingDb(false);
-    }
-  }, [refreshEntries]);
+    // Open the reset confirmation modal (user can download a backup before proceeding)
+    setShowResetConfirm(true);
+  }, []);
 
   const handleReprocessStrongs = useCallback(async () => {
     if (isProcessing) return;
@@ -1312,6 +1290,67 @@ const App: React.FC = () => {
       alert('Failed to save backup: ' + (e instanceof Error ? e.message : String(e)));
     }
   }, [backupFilename]);
+
+  // Reset confirmation modal state
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  const performReset = useCallback(async (backupBefore: boolean) => {
+    // Close modal immediately
+    setShowResetConfirm(false);
+
+    // If requested, attempt to download a backup first
+    if (backupBefore) {
+      const data = dbService.exportDatabase();
+      if (!data) {
+        if (!window.confirm('Backup failed or no database is loaded. Continue with reset without a backup?')) {
+          return;
+        }
+      } else {
+        try {
+          const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+          const blob = new Blob([arrayBuffer as ArrayBuffer], { type: 'application/octet-stream' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = backupFilename || 'lexicon-backup.sqlite';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          alert('Backup saved as ' + (backupFilename || 'lexicon-backup.sqlite'));
+        } catch (e) {
+          console.error('Failed to save backup', e);
+          if (!window.confirm('Backup failed. Continue with reset without a backup?')) return;
+        }
+      }
+    } else {
+      // If not backing up, confirm overwrite if DB exists
+      if (dbService.hasDatabase()) {
+        if (!window.confirm('A database already exists. Creating a new DB now will replace the current working DB. Continue?')) {
+          return;
+        }
+      }
+    }
+
+    setIsResettingDb(true);
+    setDbError(null);
+    try {
+      await dbService.resetDatabase();
+      await dbService.init();
+      setDbLoadSource(dbService.getLoadSource());
+      setHasDatabase(dbService.hasDatabase());
+      setInitialSetupRequired(false);
+      refreshEntries(null);
+      setSweepInvalidCount(dbService.getPagesWithInvalid().length);
+      setInvalidPages(dbService.getPagesWithInvalid());
+      alert('A fresh database has been created and is ready.');
+    } catch (error: any) {
+      console.error('Failed to create new database', error);
+      setDbError(error?.message || 'Failed to create new database.');
+    } finally {
+      setIsResettingDb(false);
+    }
+  }, [backupFilename, refreshEntries]);
 
   const handleRebuildIds = useCallback(async () => {
     // Open the modal with default settings
@@ -1720,16 +1759,15 @@ const App: React.FC = () => {
 
           {/* Database Actions */}
           <div className="flex items-center gap-2">
-            {(!hasDatabase || initialSetupRequired) && (
-              <button
-                onClick={handleCreateNewDatabaseNow}
-                disabled={isResettingDb || isProcessing}
-                className="text-[10px] font-semibold uppercase tracking-wide rounded px-2 py-1 border border-slate-200 dark:border-slate-600 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 disabled:opacity-60"
-                title="Create a new empty database (only when none exists, or confirm to overwrite)"
-              >
-                {isResettingDb ? 'Creating...' : 'Create New DB'}
-              </button>
-            )}
+            <button
+              onClick={handleCreateNewDatabaseNow}
+              disabled={isResettingDb || isProcessing}
+              className="text-[10px] font-semibold uppercase tracking-wide rounded px-2 py-1 border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-60"
+              title="Reset or create a fresh database. Backup recommended."
+            >
+              {isResettingDb ? 'Processing...' : 'Reset DB'}
+            </button>
+
             <button
               onClick={handleCreateNewDatabase}
               disabled={isProcessing}
@@ -1825,14 +1863,14 @@ const App: React.FC = () => {
         <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 px-4 py-2 text-[11px] flex flex-wrap items-center justify-between gap-2">
           <p className="max-w-3xl">
             No existing lexicon.sqlite was detected. Drop a prebuilt file into public/lexicon.sqlite or
-            click Create New DB to generate a fresh working database before importing scans.
+            click Reset DB to generate a fresh working database before importing scans.
           </p>
           <button
             onClick={handleCreateNewDatabaseNow}
             disabled={isResettingDb || isProcessing}
             className="text-[11px] font-semibold uppercase tracking-wide rounded px-2 py-1 border border-amber-400 dark:border-amber-700 bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/60 disabled:opacity-60"
           >
-            {isResettingDb ? 'Creating...' : 'Create New DB'}
+            {isResettingDb ? 'Processing...' : 'Reset DB'}
           </button>
         </div>
       )}
@@ -2566,6 +2604,36 @@ const App: React.FC = () => {
             <div className="flex justify-end gap-2 p-4 border-t border-slate-200">
               <button onClick={() => setShowBackupModal(false)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
               <button onClick={handleConfirmBackup} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg">Download Backup</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset DB Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-slate-200">
+              <h2 className="text-lg font-bold text-slate-800">Reset Database</h2>
+              <button onClick={() => setShowResetConfirm(false)} className="p-1 hover:bg-slate-100 rounded-lg transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
+                <strong>Warning:</strong> Resetting will delete the current database and cannot be undone. Please back up first.
+              </div>
+              <p className="text-sm text-slate-700">Would you like to download a backup before resetting?</p>
+              <p className="text-xs text-slate-500">Note: If you use the bundled SQLite server, this action clears the browser/IndexedDB copy only — it does not delete `public/lexicon.sqlite` on disk. To reset the server-backed DB, delete or replace `public/lexicon.sqlite` on the server or POST a new DB to <code>/lexicon.sqlite</code>.</p>
+            </div>
+
+            <div className="flex justify-end gap-2 p-4 border-t border-slate-200">
+              <button onClick={() => setShowResetConfirm(false)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
+              <button onClick={() => performReset(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg">Download Backup & Reset</button>
+              <button onClick={() => performReset(false)} className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg">Reset Without Backup</button>
             </div>
           </div>
         </div>

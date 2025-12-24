@@ -26,6 +26,7 @@ class DatabaseService {
   private loadSource: DatabaseLoadSource = null;
   private strongsDb: any = null;
   private serverAvailable: boolean = false;
+  private forceFreshInit: boolean = false;
 
   constructor() {
     localforage.config({
@@ -93,6 +94,7 @@ class DatabaseService {
     this.db = null;
     this.loadSource = null;
     this.isReady = false;
+    this.forceFreshInit = true;
   }
 
   async loadStrongNumbersDb() {
@@ -145,20 +147,24 @@ class DatabaseService {
       // 1. Check if the local server is running
       this.serverAvailable = await this.checkServer();
 
+      const forceFreshInit = this.forceFreshInit;
+
       let loadedFromExisting = false;
 
       // 2. If server is available, try to load from it first
-      if (this.serverAvailable) {
+      if (this.serverAvailable && !forceFreshInit) {
         const loaded = await this.loadFromServer();
         if (loaded) {
           loadedFromExisting = true;
           // Successfully loaded from server - skip other sources
           console.info('Using server-backed lexicon.sqlite');
         }
+      } else if (this.serverAvailable && forceFreshInit) {
+        console.info('Skipping server-backed lexicon.sqlite to force fresh initialization');
       }
 
       // 3. Fallback: try IndexedDB cache
-      if (!this.db) {
+      if (!this.db && !forceFreshInit) {
         const savedDb = await localforage.getItem<Uint8Array>(STORE_KEY);
         if (savedDb) {
           if (isSqliteFile(savedDb)) {
@@ -174,8 +180,7 @@ class DatabaseService {
       }
 
       // 4. Fallback: try prebuilt file in public/
-      if (!this.db) {
-        let loadedFromFile = false;
+      if (!this.db && !forceFreshInit) {
         const tryPaths = ['/lexicon.sqlite', '/prebuilt/lexicon.sqlite'];
         for (const path of tryPaths) {
           try {
@@ -191,7 +196,6 @@ class DatabaseService {
             this.db = new this.SQL.Database(new Uint8Array(buf));
             this.loadSource = 'prebuilt-file';
             await this.save();
-            loadedFromFile = true;
             loadedFromExisting = true;
             console.info(`Loaded database from ${path}`);
             break;
@@ -199,39 +203,43 @@ class DatabaseService {
             console.debug(`Failed fetching ${path}:`, e);
           }
         }
+      }
 
-        // 5. Last resort: create fresh database
-        if (!loadedFromFile) {
-          this.db = new this.SQL.Database();
-          this.loadSource = 'fresh';
-          this.initSchema();
+      // 5. Last resort: create fresh database
+      if (!this.db) {
+        this.db = new this.SQL.Database();
+        this.loadSource = 'fresh';
+        this.initSchema();
 
-          // If server is available, push the fresh DB there immediately
-          if (this.serverAvailable) {
-            await this.pushToServer();
-            console.info('Fresh database pushed to server');
-          } else {
-            // Trigger download for manual placement
-            try {
-              if (typeof window !== 'undefined' && this.db) {
-                const binary = this.db.export();
-                const blob = new Blob([binary], { type: 'application/octet-stream' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'lexicon.sqlite';
-                a.style.display = 'none';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                console.info('A new lexicon.sqlite file was generated and downloaded.');
-              }
-            } catch (e) {
-              console.debug('Automatic lexicon.sqlite download failed:', e);
+        // If server is available, push the fresh DB there immediately
+        if (this.serverAvailable) {
+          await this.pushToServer();
+          console.info('Fresh database pushed to server');
+        } else {
+          // Trigger download for manual placement
+          try {
+            if (typeof window !== 'undefined' && this.db) {
+              const binary = this.db.export();
+              const blob = new Blob([binary], { type: 'application/octet-stream' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'lexicon.sqlite';
+              a.style.display = 'none';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              console.info('A new lexicon.sqlite file was generated and downloaded.');
             }
+          } catch (e) {
+            console.debug('Automatic lexicon.sqlite download failed:', e);
           }
         }
+      }
+
+      if (forceFreshInit && this.db) {
+        this.forceFreshInit = false;
       }
 
         if (this.db) {
